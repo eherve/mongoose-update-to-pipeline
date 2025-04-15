@@ -1,6 +1,6 @@
 {
   "name": "@eherve/mongoose-update-to-pipeline",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Transform plain update to pipeline update",
   "author": "Eric Herve <eric.herve.95@gmail.com>",
   "license": "ISC",
@@ -8,7 +8,8 @@
   "publishConfig": {
     "access": "public"
   },
-  "main": "index.js",
+  "main": "./dist/plugin.js",
+  "types": "dist/plugin.d.ts",
   "scripts": {
     "build": "rm dist/* ; tsc -d",
     "test": "docker run -p 4242:27017 --name mongoose-update-to-pipeline --rm -d mongo:8.0 && tsc -p ./tsconfig.test.json && c8 mocha -R spec dist/**.spec.js ; docker stop $(docker ps -a -f name=mongoose-update-to-pipeline -q)",
