@@ -2,20 +2,118 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.updateToPipeline = updateToPipeline;
 const lodash = require("lodash");
-function buildValue(stage, key, value, prefixKey) {
+function buildUnsetValue(key, value, prefixKey) {
+    if (prefixKey) {
+        return {
+            key,
+            value: {
+                $unsetField: {
+                    field: key,
+                    input: `$$${prefixKey}`,
+                },
+            },
+        };
+    }
+    return null;
+}
+function buildCurrentDateValue(key, value, prefixKey) {
     const path = prefixKey ? `$$${prefixKey}.${key}` : `$${key}`;
-    switch (stage) {
+    if (value === true || value?.$type === 'date')
+        return { key, value: '$$NOW' };
+    if (value?.$type === 'timestamp')
+        return { key, value: '$$CLUSTER_TIME' };
+    return { key, value: path };
+}
+function buildSetOnInsertValue(key, value, prefixKey) {
+    return {
+        key,
+        value: {
+            $cond: {
+                if: { $eq: [{ $size: { $objectToArray: '$$ROOT' } }, 0] },
+                then: value,
+                else: `$${key}`,
+            },
+        },
+    };
+}
+function buildPushValue(key, value, prefixKey) {
+    const path = prefixKey ? `$$${prefixKey}.${key}` : `$${key}`;
+    const pushValue = value.$each ?? [value];
+    let keyValue = value.$position >= 0
+        ? { $concatArrays: [{ $slice: [path, 0, value.$position] }, pushValue, { $slice: [path, value.$position] }] }
+        : value.$position < 0
+            ? {
+                $concatArrays: [
+                    { $slice: [path, 0, { $subtract: [{ $size: path }, value.$position] }] },
+                    pushValue,
+                    { $slice: [path, value.$position] },
+                ],
+            }
+            : { $concatArrays: [path, pushValue] };
+    if (value.$sort)
+        keyValue = { $sortArray: { input: keyValue, sortBy: value.$sort } };
+    if (!lodash.isNil(value.$slice)) {
+        keyValue = value.$slice >= 0 ? { $slice: [keyValue, 0, value.$slice] } : { $slice: [keyValue, value.$slice] };
+    }
+    return { key, value: keyValue };
+}
+function getPullFilter(obj, item, path) {
+    const filter = [];
+    Object.keys(obj).forEach(k => {
+        const v = obj[k];
+        if (lodash.startsWith(k, '$')) {
+            if (k === '$elemMatch')
+                filter.push({ $and: getPullFilter(v, item, path) });
+            else
+                filter.push({ [k]: [item, v] });
+        }
+        else if (typeof v !== 'object') {
+            filter.push({ $eq: [`${item}.${k}`, v] });
+        }
+        else {
+            filter.push({ $and: getPullFilter(v, `${item}.${k}`, `${path}.${k}`) });
+        }
+    });
+    return filter;
+}
+function buildPullValue(key, value, prefixKey) {
+    const path = prefixKey ? `$$${prefixKey}.${key}` : `$${key}`;
+    if (typeof value !== 'object') {
+        return { key, value: { $filter: { input: path, as: 'item', cond: { $ne: ['$$item', value] } } } };
+    }
+    const pullValue = {
+        $filter: {
+            input: path,
+            as: 'item',
+            cond: { $not: { $or: getPullFilter(value, `$$item`, prefixKey ? `${prefixKey}.${key}` : key) } },
+        },
+    };
+    return { key, value: pullValue };
+}
+function buildPullAllValue(key, value, prefixKey) {
+    const path = prefixKey ? `$$${prefixKey}.${key}` : `$${key}`;
+    const pullValue = {
+        $filter: {
+            input: path,
+            as: 'item',
+            cond: { $not: { $or: getPullFilter({ $in: value }, `$$item`, prefixKey ? `${prefixKey}.${key}` : key) } },
+        },
+    };
+    return { key, value: pullValue };
+}
+function buildValue(operator, key, value, prefixKey) {
+    const path = prefixKey ? `$$${prefixKey}.${key}` : `$${key}`;
+    switch (operator) {
         case '$set':
             return { key, value };
+        case '$setOnInsert':
+            return buildSetOnInsertValue(key, value, prefixKey);
         case '$inc':
             return { key, value: { $add: [path, value] } };
         case '$mul':
             return { key, value: { $multiply: [path, value] } };
         case '$currentDate':
-            return {
-                key,
-                value: value === true || value?.$type === 'date' ? '$$NOW' : value?.$type === 'timestamp' ? '$$CLUSTER_TIME' : path,
-            };
+            return buildCurrentDateValue(key, value, prefixKey);
         case '$min':
             return { key, value: { $min: [path, value] } };
         case '$max':
@@ -23,68 +121,15 @@ function buildValue(stage, key, value, prefixKey) {
         case '$rename':
             return { key: value, value: path };
         case '$unset':
-            if (prefixKey) {
-                return {
-                    key,
-                    value: {
-                        $unsetField: {
-                            field: key,
-                            input: `$$${prefixKey}`,
-                        },
-                    },
-                };
-            }
-            return;
+            return buildUnsetValue(key, value, prefixKey);
         case '$push':
-            const pushValue = value.$each ?? [value];
-            let keyValue = value.$position >= 0
-                ? { $concatArrays: [{ $slice: [path, 0, value.$position] }, pushValue, { $slice: [path, value.$position] }] }
-                : value.$position < 0
-                    ? {
-                        $concatArrays: [
-                            { $slice: [path, 0, { $subtract: [{ $size: path }, value.$position] }] },
-                            pushValue,
-                            { $slice: [path, value.$position] },
-                        ],
-                    }
-                    : { $concatArrays: [path, pushValue] };
-            if (value.$sort)
-                keyValue = { $sortArray: { input: keyValue, sortBy: value.$sort } };
-            if (!lodash.isNil(value.$slice)) {
-                keyValue = value.$slice >= 0 ? { $slice: [keyValue, 0, value.$slice] } : { $slice: [keyValue, value.$slice] };
-            }
-            return { key, value: keyValue };
+            return buildPushValue(key, value, prefixKey);
         case '$pull':
-            if (typeof value !== 'object') {
-                return { key, value: { $filter: { input: path, as: 'item', cond: { $ne: ['$$item', value] } } } };
-            }
-            function getPullFilter(obj, item, path) {
-                const filter = [];
-                Object.keys(obj).forEach(k => {
-                    const v = obj[k];
-                    if (lodash.startsWith(k, '$')) {
-                        if (k === '$elemMatch')
-                            filter.push({ $and: getPullFilter(v, item, path) });
-                        else
-                            filter.push({ [k]: [item, v] });
-                    }
-                    else if (typeof v !== 'object') {
-                        filter.push({ $eq: [`${item}.${k}`, v] });
-                    }
-                    else {
-                        filter.push({ $and: getPullFilter(v, `${item}.${k}`, `${path}.${k}`) });
-                    }
-                });
-                return filter;
-            }
-            const pullValue = {
-                $filter: {
-                    input: path,
-                    as: 'item',
-                    cond: { $not: { $or: getPullFilter(value, `$$item`, prefixKey ? `${prefixKey}.${key}` : key) } },
-                },
-            };
-            return { key, value: pullValue };
+            return buildPullValue(key, value, prefixKey);
+        case '$pullAll':
+            return buildPullAllValue(key, value, prefixKey);
+        default:
+            throw new Error(`unmanaged ${operator} operator`);
     }
 }
 function getFilter(filters, array, property, as, prefix) {
@@ -131,22 +176,22 @@ function parsePropertyValue(key) {
     });
     return { property: base, array, path: path };
 }
-function mapStageValue(stage, key, value, filters, parent) {
+function mapStageValue(operator, key, value, filters, parent) {
     const { property, array, path } = parsePropertyValue(key);
     const as = parent ? `${parent}Elemt${property}Elemt` : `${property}Elemt`;
     const input = parent ? `$$${parent}Elemt.${property}` : `$${property}`;
     let mergeValue;
     if (lodash.includes(path, '$')) {
-        const mapped = mapStageValue(stage, path, value, filters, parent ? `$parent}.${property}` : property);
+        const mapped = mapStageValue(operator, path, value, filters, parent ? `$parent}.${property}` : property);
         if (!mapped)
             return;
         mergeValue = { $mergeObjects: [`$$${as}`, { [mapped.key]: mapped.value }] };
     }
     else {
-        const v = buildValue(stage, path, value, as);
+        const v = buildValue(operator, path, value, as);
         if (!v)
             return;
-        if (stage === '$unset')
+        if (operator === '$unset')
             mergeValue = v.value;
         else
             mergeValue = { $mergeObjects: [`$$${as}`, { [v.key]: v.value }] };
@@ -157,19 +202,20 @@ function mapStageValue(stage, key, value, filters, parent) {
         : mergeValue;
     return { key: property, value: { $map: { input, as, in: transform } } };
 }
-function mapStage(stage, filter, update, options) {
+function mapStage(operator, filter, update, options) {
     const stageUpdate = {};
     const filters = (filter ? [filter] : []).concat(options?.arrayFilters ?? []);
     Object.keys(update ?? {}).forEach(key => {
         if (lodash.includes(key, '$')) {
-            const mapped = mapStageValue(stage, key, update[key], filters);
+            const mapped = mapStageValue(operator, key, update[key], filters);
             if (mapped)
                 stageUpdate[mapped.key] = mapped.value;
         }
         else {
-            const v = buildValue(stage, key, update[key]);
-            if (v)
-                stageUpdate[v.key] = v.value;
+            const v = buildValue(operator, key, update[key]);
+            if (!v)
+                return;
+            stageUpdate[v.key] = v.value;
         }
     });
     return stageUpdate;
@@ -178,10 +224,11 @@ function updateToPipeline(filter, update, options) {
     if (Array.isArray(update))
         return update;
     const pipeline = [];
-    lodash.forEach(lodash.keys(update), key => {
-        const rootUpdate = lodash.filter(lodash.keys(update[key]), k => !lodash.includes(k, '$'));
-        switch (key) {
+    lodash.forEach(lodash.keys(update), operator => {
+        const rootUpdate = lodash.filter(lodash.keys(update[operator]), k => !lodash.includes(k, '$'));
+        switch (operator) {
             case '$set':
+            case '$setOnInsert':
             case '$inc':
             case '$mul':
             case '$currentDate':
@@ -189,21 +236,22 @@ function updateToPipeline(filter, update, options) {
             case '$max':
             case '$push':
             case '$pull':
-                return pipeline.push({ $set: mapStage(key, filter, update[key], options) });
+            case '$pullAll':
+                return pipeline.push({ $set: mapStage(operator, filter, update[operator], options) });
             case '$rename':
-                pipeline.push({ $set: mapStage('$rename', filter, update[key], options) });
+                pipeline.push({ $set: mapStage('$rename', filter, update[operator], options) });
                 if (rootUpdate.length)
                     pipeline.push({ $unset: rootUpdate });
                 return;
             case '$unset':
-                const unset = mapStage('$unset', filter, update[key], options);
+                const unset = mapStage('$unset', filter, update[operator], options);
                 if (lodash.keys(unset).length)
                     pipeline.push({ $set: unset });
                 if (rootUpdate.length)
                     pipeline.push({ $unset: rootUpdate });
                 return;
             default:
-                throw new Error(`unmanaged ${key}`);
+                throw new Error(`unmanaged ${operator} operator`);
         }
     });
     return pipeline;

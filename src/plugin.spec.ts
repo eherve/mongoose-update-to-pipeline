@@ -793,7 +793,7 @@ describe('Update to pipeline', () => {
       await check(update, pipelineUpdate);
     });
 
-    it('Pull on element from one sub array', async () => {
+    it('Pull one element from one sub array', async () => {
       const filter = { code: 'P12345' };
       const update = { $pull: { 'sousProduits.$[elmt].pieces': { code: 'PI678A1' } } };
       const arrayFilters = [{ 'elmt.code': 'P12345' }];
@@ -803,7 +803,7 @@ describe('Update to pipeline', () => {
       await check(update, pipelineUpdate);
     });
 
-    it('Pull on element from all sub array', async () => {
+    it('Pull one element from all sub array', async () => {
       const filter = { code: 'P12345' };
       const update = { $pull: { 'sousProduits.$[].pieces': { code: 'PI678A1' } } };
       const pipelineUpdate = updateToPipeline(filter, update);
@@ -812,9 +812,59 @@ describe('Update to pipeline', () => {
       await check(update, pipelineUpdate);
     });
 
-    it('Pull on element from all sub array obj style', async () => {
+    it('Pull one element from all sub array obj style', async () => {
       const filter = { code: 'P12345' };
       const update = { $pull: { sousProduits: { pieces: { $elemMatch: { code: 'PI678A1' } } } } };
+      const pipelineUpdate = updateToPipeline(filter, update);
+      await baseModel.updateOne(filter, update);
+      await testModel.updateOne(filter, pipelineUpdate);
+      await check(update, pipelineUpdate);
+    });
+  });
+
+  describe('$pullAll', () => {
+    it('Pull one element from array', async () => {
+      const filter = { code: 'P12345' };
+      const update = {
+        $pullAll: { tags: ['T1'] },
+      };
+      const pipelineUpdate = updateToPipeline(filter, update);
+      await baseModel.updateOne(filter, update);
+      await testModel.updateOne(filter, pipelineUpdate);
+      await check(update, pipelineUpdate);
+    });
+
+    it('Pull two element from array', async () => {
+      const filter = { code: 'P12345' };
+      const update = {
+        $pullAll: { tags: ['T1', 'T2'] },
+      };
+      const pipelineUpdate = updateToPipeline(filter, update);
+      await baseModel.updateOne(filter, update);
+      await testModel.updateOne(filter, pipelineUpdate);
+      await check(update, pipelineUpdate);
+    });
+  });
+
+  describe('$setOnInsert', () => {
+    it('Set on insert on not existing', async () => {
+      const filter = { code: 'insert' };
+      const update = {
+        $setOnInsert: { code: 'insert', date: new Date(), prix: 0, tags: ['T1', 'T2', 'T3'] },
+        $set: { description: 'insert' },
+      };
+      const pipelineUpdate = updateToPipeline(filter, update);
+      await baseModel.updateOne(filter, update);
+      await testModel.updateOne(filter, pipelineUpdate);
+      await check(update, pipelineUpdate);
+    });
+
+    it('Set on insert on existing', async () => {
+      const filter = { code: 'P12345' };
+      const update = {
+        $setOnInsert: { code: 'P12345', date: new Date(), prix: 0, tags: ['T1', 'T2', 'T3'] },
+        $set: { description: 'insert' },
+      };
       const pipelineUpdate = updateToPipeline(filter, update);
       await baseModel.updateOne(filter, update);
       await testModel.updateOne(filter, pipelineUpdate);

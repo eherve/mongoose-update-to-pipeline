@@ -1,6 +1,6 @@
 {
   "name": "@eherve/mongoose-update-to-pipeline",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "Transform plain update to pipeline update",
   "author": "Eric Herve <eric.herve.95@gmail.com>",
   "license": "ISC",
