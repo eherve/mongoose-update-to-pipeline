@@ -24,12 +24,12 @@ function buildCurrentDateValue(key, value, prefixKey) {
         return { key, value: '$$CLUSTER_TIME' };
     return { key, value: path };
 }
-function buildSetOnInsertValue(key, value, prefixKey) {
+function buildSetOnInsertValue(key, value, options) {
     return {
         key,
         value: {
             $cond: {
-                if: { $eq: [{ $size: { $objectToArray: '$$ROOT' } }, 0] },
+                if: { $eq: [{ $type: `$${options?.versionKey ?? '__v'}` }, 'missing'] },
                 then: value,
                 else: `$${key}`,
             },
@@ -101,13 +101,13 @@ function buildPullAllValue(key, value, prefixKey) {
     };
     return { key, value: pullValue };
 }
-function buildValue(operator, key, value, prefixKey) {
+function buildValue(operator, key, value, prefixKey, options) {
     const path = prefixKey ? `$$${prefixKey}.${key}` : `$${key}`;
     switch (operator) {
         case '$set':
             return { key, value };
         case '$setOnInsert':
-            return buildSetOnInsertValue(key, value, prefixKey);
+            return buildSetOnInsertValue(key, value, options);
         case '$inc':
             return { key, value: { $add: [path, value] } };
         case '$mul':
@@ -176,19 +176,19 @@ function parsePropertyValue(key) {
     });
     return { property: base, array, path: path };
 }
-function mapStageValue(operator, key, value, filters, parent) {
+function mapStageValue(operator, key, value, filters, parent, options) {
     const { property, array, path } = parsePropertyValue(key);
     const as = parent ? `${parent}Elemt${property}Elemt` : `${property}Elemt`;
     const input = parent ? `$$${parent}Elemt.${property}` : `$${property}`;
     let mergeValue;
     if (lodash.includes(path, '$')) {
-        const mapped = mapStageValue(operator, path, value, filters, parent ? `$parent}.${property}` : property);
+        const mapped = mapStageValue(operator, path, value, filters, parent ? `$parent}.${property}` : property, options);
         if (!mapped)
             return;
         mergeValue = { $mergeObjects: [`$$${as}`, { [mapped.key]: mapped.value }] };
     }
     else {
-        const v = buildValue(operator, path, value, as);
+        const v = buildValue(operator, path, value, as, options);
         if (!v)
             return;
         if (operator === '$unset')
@@ -207,18 +207,23 @@ function mapStage(operator, filter, update, options) {
     const filters = (filter ? [filter] : []).concat(options?.arrayFilters ?? []);
     Object.keys(update ?? {}).forEach(key => {
         if (lodash.includes(key, '$')) {
-            const mapped = mapStageValue(operator, key, update[key], filters);
+            const mapped = mapStageValue(operator, key, update[key], filters, undefined, options);
             if (mapped)
                 stageUpdate[mapped.key] = mapped.value;
         }
         else {
-            const v = buildValue(operator, key, update[key]);
+            const v = buildValue(operator, key, update[key], undefined, options);
             if (!v)
                 return;
             stageUpdate[v.key] = v.value;
         }
     });
     return stageUpdate;
+}
+function warn(options, ...message) {
+    if (options?.disabledWarn)
+        return;
+    console.warn.apply(console, message);
 }
 function updateToPipeline(filter, update, options) {
     if (Array.isArray(update))
@@ -228,7 +233,6 @@ function updateToPipeline(filter, update, options) {
         const rootUpdate = lodash.filter(lodash.keys(update[operator]), k => !lodash.includes(k, '$'));
         switch (operator) {
             case '$set':
-            case '$setOnInsert':
             case '$inc':
             case '$mul':
             case '$currentDate':
@@ -238,6 +242,13 @@ function updateToPipeline(filter, update, options) {
             case '$pull':
             case '$pullAll':
                 return pipeline.push({ $set: mapStage(operator, filter, update[operator], options) });
+            case '$setOnInsert':
+                warn(options, `$setOnInsert is based on version property '__v' addebd by mongoose, it is possible to specify it via 'versionKey' option`);
+                pipeline.push({ $set: mapStage(operator, filter, update[operator], options) });
+                pipeline.push({
+                    $set: { [options?.versionKey ?? '__v']: { $ifNull: [`$${options?.versionKey ?? '__v'}`, 0] } },
+                });
+                return;
             case '$rename':
                 pipeline.push({ $set: mapStage('$rename', filter, update[operator], options) });
                 if (rootUpdate.length)

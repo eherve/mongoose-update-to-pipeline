@@ -848,15 +848,15 @@ describe('Update to pipeline', () => {
 
   describe('$setOnInsert', () => {
     it('Set on insert on not existing', async () => {
-      const filter = { code: 'insert' };
+      const filter = { code: 'setOnInsert' };
       const update = {
-        $setOnInsert: { code: 'insert', date: new Date(), prix: 0, tags: ['T1', 'T2', 'T3'] },
-        $set: { description: 'insert' },
+        $setOnInsert: { code: 'setOnInsert', date: new Date(), prix: 0, tags: ['T1', 'T2', 'T3'] },
+        $set: { description: 'setOnInsert' },
       };
-      const pipelineUpdate = updateToPipeline(filter, update);
-      await baseModel.updateOne(filter, update);
-      await testModel.updateOne(filter, pipelineUpdate);
-      await check(update, pipelineUpdate);
+      const pipelineUpdate = updateToPipeline(filter, update, { disabledWarn: true });
+      await baseModel.updateOne(filter, update, { upsert: true });
+      await testModel.updateOne(filter, pipelineUpdate, { upsert: true });
+      await check(update, pipelineUpdate, true);
     });
 
     it('Set on insert on existing', async () => {
@@ -865,9 +865,9 @@ describe('Update to pipeline', () => {
         $setOnInsert: { code: 'P12345', date: new Date(), prix: 0, tags: ['T1', 'T2', 'T3'] },
         $set: { description: 'insert' },
       };
-      const pipelineUpdate = updateToPipeline(filter, update);
-      await baseModel.updateOne(filter, update);
-      await testModel.updateOne(filter, pipelineUpdate);
+      const pipelineUpdate = updateToPipeline(filter, update, { disabledWarn: true });
+      await baseModel.updateOne(filter, update, { upsert: true });
+      await testModel.updateOne(filter, pipelineUpdate, { upsert: true });
       await check(update, pipelineUpdate);
     });
   });
@@ -877,13 +877,14 @@ describe('Update to pipeline', () => {
   });
 });
 
-async function check(update: any, pipelineUpdate: any): Promise<void> {
+async function check(update: any, pipelineUpdate: any, omitId = false): Promise<void> {
   const baseData = (await baseModel.find()).map(d => d.toObject());
   const testData = (await testModel.find()).map(d => d.toObject());
   function customizer(v1, v2) {
     if (Array.isArray(v1) || Array.isArray(v2)) return;
     if (typeof v1 === 'object' && typeof v2 === 'object') {
       if (typeof v1.toHexString === 'function' && typeof v2.toHexString === 'function') {
+        if (omitId) return true;
         return lodash.isEqual(v1.toHexString(), v2.toHexString());
       }
       if (v1 instanceof Date && v2 instanceof Date) {
