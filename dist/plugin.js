@@ -185,7 +185,9 @@ function mapStageValue(operator, key, value, filters, parent, options) {
         const mapped = mapStageValue(operator, path, value, filters, parent ? `$parent}.${property}` : property, options);
         if (!mapped)
             return;
-        mergeValue = { $mergeObjects: [`$$${as}`, { [mapped.key]: mapped.value }] };
+        const toMerge = {};
+        lodash.set(toMerge, mapped.key, mapped.value);
+        mergeValue = { $mergeObjects: [`$$${as}`, toMerge] };
     }
     else {
         const v = buildValue(operator, path, value, as, options);
@@ -193,8 +195,11 @@ function mapStageValue(operator, key, value, filters, parent, options) {
             return;
         if (operator === '$unset')
             mergeValue = v.value;
-        else
-            mergeValue = { $mergeObjects: [`$$${as}`, { [v.key]: v.value }] };
+        else {
+            const toMerge = {};
+            lodash.set(toMerge, v.key, v.value);
+            mergeValue = { $mergeObjects: [`$$${as}`, toMerge] };
+        }
     }
     const propertyFilter = getFilter(filters, array, property, as, parent);
     const transform = propertyFilter.length
