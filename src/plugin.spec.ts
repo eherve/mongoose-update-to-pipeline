@@ -86,9 +86,28 @@ describe('Update to pipeline', () => {
       await check(update, pipelineUpdate);
     });
 
+    it('Update fields in one sub array elements', async () => {
+      const filter = { code: 'P12345', 'sousProduits.code': 'SP123A' };
+      const update = { $set: { 'sousProduits.$.description': 'test', 'sousProduits.$.prix': 10 } };
+      const pipelineUpdate = updateToPipeline(filter, update);
+      await baseModel.updateOne(filter, update);
+      await testModel.updateOne(filter, pipelineUpdate);
+      await check(update, pipelineUpdate);
+    });
+
     it('Update field in one sub array elements with arrayFilter', async () => {
       const filter = { code: 'P12345' };
       const update = { $set: { 'sousProduits.$[elmt].description': 'test' } };
+      const arrayFilters = [{ 'elmt.code': 'SP123A' }];
+      const pipelineUpdate = updateToPipeline(filter, update, { arrayFilters });
+      await baseModel.updateOne(filter, update, { arrayFilters });
+      await testModel.updateOne(filter, pipelineUpdate);
+      await check(update, pipelineUpdate);
+    });
+
+    it('Update fields in one sub array elements with arrayFilter', async () => {
+      const filter = { code: 'P12345' };
+      const update = { $set: { 'sousProduits.$[elmt].description': 'test', 'sousProduits.$[elmt].prix': 10 } };
       const arrayFilters = [{ 'elmt.code': 'SP123A' }];
       const pipelineUpdate = updateToPipeline(filter, update, { arrayFilters });
       await baseModel.updateOne(filter, update, { arrayFilters });
@@ -880,7 +899,7 @@ describe('Update to pipeline', () => {
 async function check(update: any, pipelineUpdate: any, omitId = false): Promise<void> {
   const baseData = (await baseModel.find()).map(d => d.toObject());
   const testData = (await testModel.find()).map(d => d.toObject());
-  function customizer(v1, v2) {
+  function customizer(v1: any, v2: any) {
     if (Array.isArray(v1) || Array.isArray(v2)) return;
     if (typeof v1 === 'object' && typeof v2 === 'object') {
       if (typeof v1.toHexString === 'function' && typeof v2.toHexString === 'function') {

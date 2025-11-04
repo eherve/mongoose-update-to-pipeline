@@ -256,7 +256,11 @@ function mapStage(operator: Operator, filter: any, update: any, options?: Option
   Object.keys(update ?? {}).forEach(key => {
     if (lodash.includes(key, '$')) {
       const mapped = mapStageValue(operator, key, update[key], filters, undefined, options);
-      if (mapped) stageUpdate[mapped.key] = mapped.value;
+      if (mapped) {
+        if (stageUpdate[mapped.key]) {
+          stageUpdate[mapped.key] = lodash.merge(stageUpdate[mapped.key], mapped.value);
+        } else stageUpdate[mapped.key] = mapped.value;
+      }
     } else {
       const v = buildValue(operator, key, update[key], undefined, options);
       if (!v) return;
